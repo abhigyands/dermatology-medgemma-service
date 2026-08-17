@@ -66,9 +66,26 @@ async def predict(
         # 1. Determine Normal status from the generated text
         normal = False
         has_negative_normal = re.search(r"(?i)\b(?:not|never|isn't|is not|aren't|no longer)\s+(?:normal|healthy|clear)\b", result_1)
-        has_abnormal_keywords = re.search(r"(?i)\b(?:abnormal|unhealthy|lesion|lesions|rash|disease|infection|dermatitis|melasma|nigricans|eczema|psoriasis|erythema)\b", result_1)
         
-        if not (has_negative_normal or has_abnormal_keywords):
+        # Check if any abnormal keyword is present AND is NOT negated
+        abnormal_keywords = ["abnormal", "unhealthy", "lesion", "rash", "disease", "infection", "dermatitis", "melasma", "nigricans", "eczema", "psoriasis", "erythema"]
+        found_abnormal = False
+        for kw in abnormal_keywords:
+            kw_matches = list(re.finditer(r"(?i)\b" + re.escape(kw) + r"(?:s|es|ies)?\b", result_1))
+            for match in kw_matches:
+                # Find the start of the clause/sentence containing this match
+                boundary_match = list(re.finditer(r"[.;!]", result_1[:match.start()]))
+                clause_start = boundary_match[-1].end() if boundary_match else 0
+                clause_text = result_1[clause_start:match.start()].lower()
+                
+                # Check for negation words in the clause before the keyword
+                if not re.search(r"\b(?:no|without|free\s+of|negative\s+for|absence\s+of|clear\s+of|no\s+obvious|no\s+clear|no\s+active|no\s+signs\s+of|deny|denies|not)\b", clause_text):
+                    found_abnormal = True
+                    break
+            if found_abnormal:
+                break
+        
+        if not (has_negative_normal or found_abnormal):
             if re.search(r"(?i)\b(?:normal|healthy|clear)\b", result_1):
                 normal = True
 
@@ -97,6 +114,9 @@ async def predict(
             parts = re.split(r',|;|\bor\b|\band\b', condition_text, flags=re.IGNORECASE)
             for part in parts:
                 part = part.strip()
+                # Skip if the part itself is a negation or contains negation words
+                if re.search(r"(?i)\b(?:no|none|without|negative|absence|clear|free|not)\b", part):
+                    continue
                 part = re.sub(r"(?i)^\s*(?:a|an|the|possibly|likely|suggests a|suggesting a)\b\s*", "", part)
                 part = re.sub(r"(?i)\s+(?:lesion|lesions|condition|disease|skin condition)\s*$", "", part)
                 part = part.strip()
@@ -669,8 +689,23 @@ async def predict(
             }
             result_lower = result_1.lower()
             for canonical, synonyms in known_conditions.items():
-                if any(syn in result_lower for syn in synonyms):
-                    abnormality.append(canonical)
+                for syn in synonyms:
+                    # Find all occurrences of the synonym
+                    syn_matches = list(re.finditer(r"(?i)\b" + re.escape(syn) + r"(?:s|es|ies)?\b", result_1))
+                    non_negated_match_found = False
+                    for match in syn_matches:
+                        # Find the clause containing this match
+                        boundary_match = list(re.finditer(r"[.;!]", result_1[:match.start()]))
+                        clause_start = boundary_match[-1].end() if boundary_match else 0
+                        clause_text = result_1[clause_start:match.start()].lower()
+                        
+                        # If the synonym is NOT negated, we count it
+                        if not re.search(r"\b(?:no|without|free\s+of|negative\s+for|absence\s+of|clear\s+of|no\s+obvious|no\s+clear|no\s+active|no\s+signs\s+of|deny|denies|not)\b", clause_text):
+                            non_negated_match_found = True
+                            break
+                    if non_negated_match_found:
+                        abnormality.append(canonical)
+                        break
 
         seen = set()
         abnormality = [x for x in abnormality if not (x.lower() in seen or seen.add(x.lower()))]
