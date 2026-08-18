@@ -1,0 +1,6 @@
+fastapi
+Pillow
+Pillow
+# torch==2.13.0
+transformers==5.15.0
+uvicorn
